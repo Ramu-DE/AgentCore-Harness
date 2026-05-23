@@ -1,0 +1,20 @@
+[
+  {
+    "name": "policy_retrieval",
+    "description": "Retrieve return and refund policy information from the knowledge base. Supports filtering by country to get region-specific policies.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "The natural language query describing what policy information to retrieve, e.g. 'What is the return policy for electronics?'"
+        },
+        "country": {
+          "type": "string",
+          "description": "Optional two-letter country code to filter policies by region, e.g. US, UK, IN"
+        }
+      },
+      "required": ["query"]
+    }
+  }
+]

@@ -1,0 +1,53 @@
+# ─── Kiro IDE ─────────────────────────────────────────────────────────────────
+.kiro/
+
+# ─── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ─── Node / CDK ───────────────────────────────────────────────────────────────
+node_modules/
+cdk.out/
+*.js.map
+
+# ─── AgentCore CLI artifacts ──────────────────────────────────────────────────
+agentcore/.cli/
+agentcore/.cache/
+AgentCoreProject/agentcore/.cli/
+AgentCoreProject/agentcore/.cache/
+ReturnsRefundsAgent/agentcore/.cli/
+
+# ─── Secrets & credentials (DO NOT COMMIT) ────────────────────────────────────
+.env
+.env.local
+agentcore/.env.local
+AgentCoreProject/agentcore/.env.local
+ReturnsRefundsAgent/agentcore/.env.local
+cognito_config.json
+
+# ─── OS files ─────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── IDE ──────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ─── Lock files (optional — keep uv.lock for reproducibility) ─────────────────
+# uv.lock
+
+# ─── Nested .git directories (subprojects) ───────────────────────────────────
+AgentCoreProject/.git/
+ReturnsRefundsAgent/.git/

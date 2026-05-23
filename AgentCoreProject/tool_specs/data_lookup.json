@@ -1,0 +1,71 @@
+[
+  {
+    "name": "order_lookup",
+    "description": "Look up all orders for a given customer. Returns order details including product IDs, purchase dates, and order status.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "customer_id": {
+          "type": "string",
+          "description": "The unique customer identifier, e.g. C-01"
+        }
+      },
+      "required": ["customer_id"]
+    }
+  },
+  {
+    "name": "user_lookup",
+    "description": "Look up customer details by customer ID. Returns the customer name and country code.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "customer_id": {
+          "type": "string",
+          "description": "The unique customer identifier, e.g. C-01"
+        }
+      },
+      "required": ["customer_id"]
+    }
+  },
+  {
+    "name": "product_lookup",
+    "description": "Look up product details by product ID. Returns the product name, category, and provider.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "product_id": {
+          "type": "string",
+          "description": "The unique product identifier, e.g. P-001"
+        }
+      },
+      "required": ["product_id"]
+    }
+  },
+  {
+    "name": "find_returned_products",
+    "description": "Find all orders with RETURNED status across all customers. Returns order details enriched with product names from the product catalog.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    }
+  },
+  {
+    "name": "process_refund",
+    "description": "Process a refund for a specific order. Updates the order status to REFUNDED and returns confirmation with product details. Requires both customer_id and product_id to identify the order.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "customer_id": {
+          "type": "string",
+          "description": "The customer identifier who placed the order, e.g. C-01"
+        },
+        "product_id": {
+          "type": "string",
+          "description": "The product identifier for the order to refund, e.g. P-001"
+        }
+      },
+      "required": ["customer_id", "product_id"]
+    }
+  }
+]

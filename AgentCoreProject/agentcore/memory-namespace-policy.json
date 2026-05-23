@@ -1,0 +1,24 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowMemoryNamespacePath",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock-agentcore:RetrieveMemoryRecords",
+        "bedrock-agentcore:CreateEvent",
+        "bedrock-agentcore:GetEvent",
+        "bedrock-agentcore:ListEvents",
+        "bedrock-agentcore:BatchCreateMemoryRecords",
+        "bedrock-agentcore:BatchUpdateMemoryRecords",
+        "bedrock-agentcore:BatchDeleteMemoryRecords"
+      ],
+      "Resource": "arn:aws:bedrock-agentcore:us-west-2:817509234255:memory/AgentCoreProject_CustomerAssistantMemory-t0PQ1ICcGo",
+      "Condition": {
+        "StringLike": {
+          "bedrock-agentcore:namespacePath": "/users/*/preferences"
+        }
+      }
+    }
+  ]
+}
