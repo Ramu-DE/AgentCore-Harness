@@ -199,6 +199,49 @@ ReturnsRefundsAgentProject/
 
 ---
 
+## 🎯 Understanding the `@tool` Decorator
+
+The Strands `@tool` decorator is how you give agents capabilities beyond conversation. It's the core pattern used throughout this project.
+
+### What It Does
+
+| Aspect | How It Works |
+|--------|-------------|
+| **Turns a function into a tool** | The agent can decide to call the function during a conversation when it's relevant to the user's question |
+| **Uses the docstring as the tool description** | The agent reads the docstring to understand *when* to use the tool. Write clear, descriptive docstrings |
+| **Uses type hints for parameters** | The agent uses the function signature to know what arguments to pass. Always include type hints |
+| **Returns a string** | The tool's return value is passed back to the agent as context for generating its response |
+
+### Example
+
+```python
+from strands import tool
+
+@tool
+def order_lookup(customer_id: str) -> str:
+    """Look up all orders for a given customer.
+    
+    Returns order details including product IDs, purchase dates, and order status.
+    Use this when the user asks about a customer's orders or purchase history.
+    """
+    # Query DynamoDB for the customer's orders
+    response = orders_table.query(
+        KeyConditionExpression=Key("customer_id").eq(customer_id)
+    )
+    return json.dumps({"orders": response.get("Items", [])})
+```
+
+### Why This Pattern Works
+
+- **Simple** — Tools are just regular Python functions with a decorator
+- **Testable** — Call them directly in unit tests without the agent
+- **Self-documenting** — The docstring IS the tool's instruction manual for the agent
+- **Type-safe** — Type hints ensure the agent passes correct argument types
+
+> **In this project**, the Lambda functions serve as remote tool backends accessed via the MCP Gateway. The `@tool` pattern applies the same way — whether tools run locally or behind a gateway, the agent interacts with them through the same interface.
+
+---
+
 ## 🔧 Agent Tools
 
 ### Data Lookup (via `workshop-data-lookup` Lambda)
