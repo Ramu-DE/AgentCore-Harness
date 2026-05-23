@@ -4,6 +4,12 @@ An AI-powered **Returns & Refunds Assistant** built with the [Strands Agents SDK
 
 ---
 
+## What Are We Building?
+
+![Architecture Diagram](docs/images/architecture-diagram.png)
+
+---
+
 ## 📐 Architecture Overview
 
 ```
@@ -308,6 +314,96 @@ agentcore invoke --agent CustomerAssistantAgent
 | `boto3` / `botocore` | ≥ 1.35.0 | AWS SDK for Python |
 | `streamlit` | ≥ 1.38.0 | Chat UI framework |
 | `aws-opentelemetry-distro` | Latest | Distributed tracing |
+
+---
+
+---
+
+## 🧪 Part 8: AgentCore Harness (Preview)
+
+> **Estimated time:** ~20 minutes
+
+### What Is the Harness?
+
+So far in this workshop you've built and deployed a Strands agent to AgentCore Runtime. You wrote tools, wired up memory, plugged in a gateway, and shipped a UI. Every line of agent logic is code you (or Kiro) authored.
+
+The **AgentCore Harness** flips the model from **"code-first"** to **"config-first"** — instead of writing the orchestration loop yourself, you declare what the agent should do (model, system prompt, tools, memory) and AgentCore runs the loop for you in a managed microVM.
+
+In this part, you create a sibling harness called `CustAssistantHarness` in the same project and wire it up with three complementary tools:
+
+| Tool | Source | Purpose |
+|------|--------|---------|
+| **workshop-gateway** | Built in Part 4 | `order_lookup`, `user_lookup`, `product_lookup`, `policy_retrieval` |
+| **AgentCore Browser** | Built-in | Live external lookups (verifying policies on amazon.com, checking current product prices) |
+| **AgentCore Code Interpreter** | Built-in | Deterministic math (refund line-item calculations, return-window date math) |
+
+> **Preview note:** AgentCore Harness is in public preview in `us-east-1`, `us-west-2`, `eu-central-1`, and `ap-southeast-2`. APIs and CLI flags may evolve. See the [official preview docs](https://docs.aws.amazon.com/bedrock/latest/userguide/agentcore.html) for the latest.
+
+**Prerequisites:** You must have completed Parts 1–7. Part 4 in particular is required because the harness reuses the `workshop-gateway` you created there.
+
+---
+
+### Step 1: Understand How Harness Differs
+
+Both Runtime agents and Harnesses are first-class AgentCore primitives, but they target different developer flows:
+
+| Dimension | Runtime Agent (Parts 1–7) | Harness (this part) |
+|-----------|--------------------------|---------------------|
+| **What you write** | Python code with the Strands SDK, custom `@tool` functions, memory wiring | A declarative config — model, prompt, tools, memory references |
+| **Where the loop runs** | Your code defines the loop; AgentCore Runtime executes your code | AgentCore runs a managed Strands loop on your behalf |
+| **Container** | You deploy your code as a runtime agent | Each session gets its own isolated microVM with filesystem + shell |
+| **Switching models** | Edit code, redeploy | Override `--model-id` at invoke time, no redeploy |
+| **Built-in tools** | You wire them in via Strands | `agentcore_browser`, `agentcore_code_interpreter` available out of the box |
+| **Best for** | Long-lived production agents with custom logic | Rapid experimentation, multi-tool agents that need a fresh environment per session |
+
+The harness is roughly **"managed Strands as a service."** When the workflow you need is conversation + tool calls + maybe a fresh sandbox per session, the harness handles all the plumbing — and it can plug straight into the same AgentCore Gateway your runtime agent uses, so the same tools are available to both.
+
+---
+
+### Step 2: The CustAssistantHarness Runtime
+
+The `CustAssistantHarness` runtime is already declared in `agentcore.json`:
+
+```json
+{
+  "name": "CustAssistantHarness",
+  "build": "CodeZip",
+  "entrypoint": "main.py",
+  "codeLocation": "app/CustAssistantHarness/",
+  "runtimeVersion": "PYTHON_3_14",
+  "envVars": [
+    { "name": "AGENTCORE_GATEWAY_WORKSHOP_GATEWAY_URL", "value": "<gateway-mcp-url>" },
+    { "name": "MEMORY_CUSTASSISTANTHARNESSMEMORY_ID", "value": "<memory-id>" }
+  ],
+  "networkMode": "PUBLIC",
+  "protocol": "HTTP"
+}
+```
+
+Key differences from the `CustomerAssistantAgent` runtime:
+- Uses **AgentCore Identity** for M2M OAuth (no manual client_id/secret env vars)
+- Connects to the same gateway and memory resources
+- Demonstrates the harness pattern where AgentCore manages the agent loop
+
+---
+
+### Step 3: Deploy & Invoke
+
+```bash
+# Deploy all runtimes (including the harness)
+cd AgentCoreProject
+agentcore deploy
+
+# Invoke the harness
+agentcore invoke --agent CustAssistantHarness
+```
+
+The harness will automatically:
+1. Spin up an isolated microVM for the session
+2. Connect to the MCP Gateway using AgentCore Identity credentials
+3. Load conversation history from AgentCore Memory
+4. Run the Strands agent loop with your declared tools
+5. Stream the response back
 
 ---
 
