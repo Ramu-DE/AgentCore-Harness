@@ -1,0 +1,85 @@
+name: Agent Evals
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Nightly full suite at 02:00 UTC
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  # ── Smoke suite ─────────────────────────────────────────────────────────────
+  # Runs on every PR/push. Offline only — no LLM, no AWS. Finishes in < 30s.
+  smoke:
+    name: Trajectory smoke tests (offline)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: evals
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install eval dependencies (no agent runtime)
+        run: pip install pytest deepeval
+
+      - name: Run offline trajectory tests
+        run: |
+          pytest test_trajectory.py -v \
+            --tb=short \
+            -q
+
+  # ── Nightly full suite ───────────────────────────────────────────────────────
+  # Runs nightly and on manual dispatch. Uses real Bedrock + mock tools.
+  nightly:
+    name: Live integration evals (Bedrock + mock tools)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    defaults:
+      run:
+        working-directory: evals
+
+    permissions:
+      id-token: write   # for OIDC / IRSA
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_EVAL_ROLE_ARN }}
+          aws-region: us-west-2
+
+      - name: Install all eval dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run live integration evals (k=1, smoke slice)
+        env:
+          DEEPEVAL_API_KEY: ${{ secrets.DEEPEVAL_API_KEY }}
+        run: |
+          pytest test_live.py -v \
+            --tb=short \
+            -q
+
+      - name: Upload eval results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results-${{ github.run_id }}
+          path: evals/.deepeval/
+          retention-days: 30
