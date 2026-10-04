@@ -26,6 +26,9 @@ AgentCoreProject/agentcore/.cli/
 AgentCoreProject/agentcore/.cache/
 ReturnsRefundsAgent/agentcore/.cli/
 
+# ─── Eval run artifacts (keep directory structure, not individual results) ────
+evals/results/*.json
+
 # ─── Secrets & credentials (DO NOT COMMIT) ────────────────────────────────────
 .env
 .env.local

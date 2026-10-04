@@ -1,0 +1,7 @@
+[
+  {"customer_id": "C-01", "product_id": "P-001", "purchased_date": "2026-09-01", "status": "RETURNED"},
+  {"customer_id": "C-01", "product_id": "P-002", "purchased_date": "2026-09-15", "status": "DELIVERED"},
+  {"customer_id": "C-02", "product_id": "P-003", "purchased_date": "2026-08-20", "status": "RETURNED"},
+  {"customer_id": "C-02", "product_id": "P-004", "purchased_date": "2026-09-10", "status": "CANCELLED"},
+  {"customer_id": "C-03", "product_id": "P-001", "purchased_date": "2026-09-05", "status": "RETURNED"}
+]

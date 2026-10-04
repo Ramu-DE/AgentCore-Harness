@@ -1,299 +1,330 @@
 """
-Streamlit Chat UI for the Returns & Refunds Assistant.
+Returns & Refunds Agent — Agentic Workflow + Inline Evals
 
-Authenticates users via Cognito and invokes the deployed AgentCore Runtime agent.
+Shows the complete loop in one view:
+  1. User sends a prompt
+  2. Agent calls tools (trajectory shown step-by-step)
+  3. Eval rules fire automatically against the trajectory
+  4. Pass/fail grade displayed inline
 """
 
-import json
-import uuid
+from __future__ import annotations
 
-import boto3
+import json
+import sys
+import time
+from pathlib import Path
+
 import streamlit as st
 
-# ─── Configuration ────────────────────────────────────────────────────────────
+# ─── Path setup — allow importing from evals/ ─────────────────────────────────
 
-AWS_REGION = "us-west-2"
+_REPO_ROOT = Path(__file__).parents[1]
+sys.path.insert(0, str(_REPO_ROOT))
 
-# Cognito settings — from the project's cognito_config.json
-COGNITO_USER_POOL_ID = "us-west-2_JqFdaft8o"
-COGNITO_APP_CLIENT_ID = "4sa8r95nqmfpsd1dltmbodcq5o"
-
-# AgentCore Runtime ARN — from deployed-state.json
-AGENT_RUNTIME_ARN = (
-    "arn:aws:bedrock-agentcore:us-west-2:817509234255:"
-    "runtime/AgentCoreProject_CustomerAssistantAgent-S6e26GCfky"
+from evals.mocks.tools import (
+    TraceRecorder,
+    set_recorder,
+    order_lookup,
+    user_lookup,
+    product_lookup,
+    find_returned_products,
+    process_refund,
+    policy_retrieval,
 )
 
-# Default credentials for workshop convenience
-DEFAULT_USERNAME = "administrator@example.com"
-DEFAULT_PASSWORD = "Workshop1!"
+# ─── Page config ──────────────────────────────────────────────────────────────
 
-WELCOME_MESSAGE = (
-    "Hello! I'm your Returns & Refunds Assistant. I can help you look up orders, "
-    "check return eligibility, calculate refunds and answer policy questions. "
-    "How can I help you today?"
+st.set_page_config(
+    page_title="Agentic Eval Demo",
+    page_icon="🔄",
+    layout="wide",
 )
 
-# ─── Page Config ──────────────────────────────────────────────────────────────
+# ─── Dataset ──────────────────────────────────────────────────────────────────
 
-st.set_page_config(page_title="Returns & Refunds Assistant", page_icon="🔄")
+@st.cache_data
+def load_dataset() -> list[dict]:
+    path = _REPO_ROOT / "evals" / "dataset" / "returns_refunds.jsonl"
+    return [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
+
+DATASET = load_dataset()
+
+TOOL_FNS = {
+    "order_lookup": order_lookup,
+    "user_lookup": user_lookup,
+    "product_lookup": product_lookup,
+    "find_returned_products": find_returned_products,
+    "process_refund": process_refund,
+    "policy_retrieval": policy_retrieval,
+}
+
+TOOL_EMOJI = {
+    "order_lookup":          "📦",
+    "user_lookup":           "👤",
+    "product_lookup":        "🏷️",
+    "find_returned_products":"🔍",
+    "process_refund":        "💰",
+    "policy_retrieval":      "📜",
+}
+
+# ─── Eval logic ───────────────────────────────────────────────────────────────
+
+def run_eval_rules(rec: TraceRecorder, rules: dict) -> list[dict]:
+    results = []
+    for tool in rules.get("must_call", []):
+        passed = rec.was_called(tool)
+        results.append({"rule": "must_call", "detail": tool,
+                         "passed": passed,
+                         "msg": f"{'✅' if passed else '❌'} must call `{tool}`"})
+    for tool in rules.get("must_not_call", []):
+        passed = not rec.was_called(tool)
+        results.append({"rule": "must_not_call", "detail": tool,
+                         "passed": passed,
+                         "msg": f"{'✅' if passed else '❌'} must NOT call `{tool}`"})
+    for first, second in rules.get("order_before", []):
+        passed = rec.called_before(first, second)
+        results.append({"rule": "order_before", "detail": f"{first} → {second}",
+                         "passed": passed,
+                         "msg": f"{'✅' if passed else '❌'} `{first}` before `{second}`"})
+    return results
 
 
-# ─── Session State Initialization ────────────────────────────────────────────
+def replay_trajectory(scenario: dict) -> tuple[TraceRecorder, list[dict]]:
+    """Replay the golden trajectory; return recorder + per-step timing."""
+    rec = TraceRecorder()
+    set_recorder(rec)
+    steps = []
+    for step in scenario["recorded_trajectory"]:
+        name = step["tool"]
+        args = step.get("args", {})
+        fn = TOOL_FNS.get(name)
+        t0 = time.perf_counter()
+        result = fn(**args) if fn else {}
+        elapsed = round((time.perf_counter() - t0) * 1000, 1)
+        steps.append({"name": name, "args": args, "result": result, "ms": elapsed})
+    set_recorder(None)
+    return rec, steps
 
-def init_session_state() -> None:
-    """Initialize all session state keys with defaults."""
-    defaults = {
-        "authenticated": False,
-        "id_token": None,
-        "access_token": None,
-        "refresh_token": None,
-        "user_email": None,
-        "session_id": str(uuid.uuid4()),
-        "messages": [],
-        "challenge_session": None,
-        "challenge_name": None,
+
+def build_response(scenario: dict, rec: TraceRecorder) -> str:
+    """Synthesise a plausible agent response from tool results."""
+    traj = rec.calls
+    parts = []
+
+    refund = rec.result_for("process_refund")
+    if refund.get("refund_status") == "PROCESSED":
+        parts.append(
+            f"✅ **Refund processed** for {refund['customer_id']} — "
+            f"**{refund['product_name']}** (was {refund['previous_status']} → now **{refund['new_status']}**)."
+        )
+        return "\n\n".join(parts)
+
+    orders = rec.result_for("order_lookup")
+    if orders.get("error"):
+        return f"❌ {orders['error']} — no refund can be issued."
+
+    if orders.get("orders"):
+        statuses = {o["product_id"]: o["status"] for o in orders["orders"]}
+        lines = [f"- **{pid}**: {s}" for pid, s in statuses.items()]
+        parts.append("**Orders found:**\n" + "\n".join(lines))
+        for pid, status in statuses.items():
+            if status == "DELIVERED":
+                parts.append(f"⚠️ Product **{pid}** has status **DELIVERED** — refund not applicable.")
+            elif status == "CANCELLED":
+                parts.append(f"⚠️ Product **{pid}** has status **CANCELLED** — no refund available.")
+
+    policies = rec.result_for("policy_retrieval")
+    if policies.get("results"):
+        top = policies["results"][0]
+        parts.append(f"**Return policy ({top['country']}):** {top['text']}")
+
+    returned = rec.result_for("find_returned_products")
+    if returned.get("returned_products"):
+        lines = [f"- {r['customer_id']} / {r['product_name']} ({r['status']})"
+                 for r in returned["returned_products"]]
+        parts.append("**All returned products:**\n" + "\n".join(lines))
+
+    if not parts:
+        hints = scenario.get("expected_response_contains", [])
+        return f"Task complete. Keywords expected in response: {', '.join(hints)}."
+
+    return "\n\n".join(parts)
+
+
+# ─── Header ───────────────────────────────────────────────────────────────────
+
+st.title("🔄 Returns & Refunds Agent")
+st.caption(
+    "**Agentic workflow + inline evals** — pick a scenario, watch the agent call tools, "
+    "then see eval rules graded automatically against the trajectory."
+)
+
+st.markdown("---")
+
+# ─── Scenario selector ────────────────────────────────────────────────────────
+
+scenario_labels = {
+    f"{ex['id']} · {ex['description']}": ex
+    for ex in DATASET
+}
+
+col_sel, col_run = st.columns([5, 1])
+with col_sel:
+    chosen_label = st.selectbox(
+        "Choose a scenario (or type your own prompt below)",
+        options=list(scenario_labels.keys()),
+        index=0,
+    )
+with col_run:
+    st.markdown("<br>", unsafe_allow_html=True)
+    run_clicked = st.button("▶ Run", type="primary", use_container_width=True)
+
+selected = scenario_labels[chosen_label]
+
+custom_prompt = st.text_input(
+    "Or free-form prompt (uses closest matching scenario's trajectory)",
+    placeholder="e.g. Process a refund for C-03's laptop",
+)
+
+# Show the prompt that will be used
+active_prompt = custom_prompt.strip() if custom_prompt.strip() else selected["prompt"]
+st.caption(f"**Prompt:** {active_prompt}")
+
+# If custom prompt, find closest scenario by keyword overlap
+if custom_prompt.strip():
+    words = set(custom_prompt.lower().split())
+    scores = []
+    for ex in DATASET:
+        ex_words = set(ex["prompt"].lower().split()) | set(ex["description"].lower().split())
+        scores.append((len(words & ex_words), ex))
+    selected = max(scores, key=lambda x: x[0])[1]
+    st.caption(f"↳ Matched to: **{selected['id']}** — {selected['description']}")
+
+st.markdown("---")
+
+# ─── Initialise run state ─────────────────────────────────────────────────────
+
+if "last_run" not in st.session_state:
+    st.session_state.last_run = None
+
+if run_clicked:
+    rec, steps = replay_trajectory(selected)
+    eval_results = run_eval_rules(rec, selected["rules"])
+    response = build_response(selected, rec)
+    st.session_state.last_run = {
+        "scenario": selected,
+        "prompt": active_prompt,
+        "steps": steps,
+        "eval_results": eval_results,
+        "response": response,
+        "rec_names": rec.names(),
     }
-    for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
 
+run = st.session_state.last_run
 
-init_session_state()
+# ─── Results (3 columns) ──────────────────────────────────────────────────────
 
+if run is None:
+    st.info("👆 Pick a scenario and click **▶ Run** to see the agentic workflow + eval results.")
+else:
+    sc     = run["scenario"]
+    steps  = run["steps"]
+    evals  = run["eval_results"]
+    passed = sum(1 for r in evals if r["passed"])
+    total  = len(evals)
+    all_ok = passed == total
 
-# ─── Authentication ───────────────────────────────────────────────────────────
+    col_chat, col_traj, col_eval = st.columns([2, 2, 2])
 
-def authenticate(username: str, password: str) -> bool:
-    """Authenticate user via Cognito USER_PASSWORD_AUTH flow.
+    # ── Column 1: Prompt + Response ───────────────────────────────────────────
+    with col_chat:
+        st.subheader("💬 Conversation")
 
-    Returns True on success, sets session state on challenge.
-    """
-    client = boto3.client("cognito-idp", region_name=AWS_REGION)
-
-    try:
-        response = client.initiate_auth(
-            ClientId=COGNITO_APP_CLIENT_ID,
-            AuthFlow="USER_PASSWORD_AUTH",
-            AuthParameters={
-                "USERNAME": username,
-                "PASSWORD": password,
-            },
-        )
-    except client.exceptions.NotAuthorizedException:
-        st.error("Invalid email or password.")
-        return False
-    except client.exceptions.UserNotFoundException:
-        st.error("User not found.")
-        return False
-    except Exception as e:
-        st.error(f"Authentication failed: {e}")
-        return False
-
-    # Handle NEW_PASSWORD_REQUIRED challenge (first-time login)
-    if "ChallengeName" in response:
-        if response["ChallengeName"] == "NEW_PASSWORD_REQUIRED":
-            st.session_state["challenge_session"] = response["Session"]
-            st.session_state["challenge_name"] = "NEW_PASSWORD_REQUIRED"
-            return False
-
-    # Successful auth — store tokens
-    auth_result = response["AuthenticationResult"]
-    st.session_state["authenticated"] = True
-    st.session_state["id_token"] = auth_result.get("IdToken")
-    st.session_state["access_token"] = auth_result.get("AccessToken")
-    st.session_state["refresh_token"] = auth_result.get("RefreshToken")
-    st.session_state["user_email"] = username
-    return True
-
-
-def respond_to_new_password_challenge(username: str, new_password: str) -> bool:
-    """Complete the NEW_PASSWORD_REQUIRED challenge."""
-    client = boto3.client("cognito-idp", region_name=AWS_REGION)
-
-    try:
-        response = client.respond_to_auth_challenge(
-            ClientId=COGNITO_APP_CLIENT_ID,
-            ChallengeName="NEW_PASSWORD_REQUIRED",
-            Session=st.session_state["challenge_session"],
-            ChallengeResponses={
-                "USERNAME": username,
-                "NEW_PASSWORD": new_password,
-            },
-        )
-    except Exception as e:
-        st.error(f"Failed to set new password: {e}")
-        return False
-
-    # Store tokens after successful challenge response
-    auth_result = response["AuthenticationResult"]
-    st.session_state["authenticated"] = True
-    st.session_state["id_token"] = auth_result.get("IdToken")
-    st.session_state["access_token"] = auth_result.get("AccessToken")
-    st.session_state["refresh_token"] = auth_result.get("RefreshToken")
-    st.session_state["user_email"] = username
-    st.session_state["challenge_session"] = None
-    st.session_state["challenge_name"] = None
-    return True
-
-
-def logout() -> None:
-    """Clear authentication state."""
-    for key in ["authenticated", "id_token", "access_token", "refresh_token",
-                "user_email", "messages", "challenge_session", "challenge_name"]:
-        st.session_state[key] = None
-    st.session_state["authenticated"] = False
-    st.session_state["messages"] = []
-    st.session_state["session_id"] = str(uuid.uuid4())
-
-
-# ─── Agent Invocation ─────────────────────────────────────────────────────────
-
-def invoke_agent(prompt: str) -> str:
-    """Invoke the deployed AgentCore Runtime agent and return the streamed response."""
-    # Derive actor_id from email (part before @)
-    actor_id = st.session_state["user_email"].split("@")[0]
-
-    # Build the payload matching the agent's expected format
-    payload = json.dumps({
-        "prompt": prompt,
-        "session_id": st.session_state["session_id"],
-        "actor_id": actor_id,
-    }).encode()
-
-    client = boto3.client("bedrock-agentcore", region_name=AWS_REGION)
-
-    try:
-        response = client.invoke_agent_runtime(
-            agentRuntimeArn=AGENT_RUNTIME_ARN,
-            runtimeSessionId=st.session_state["session_id"],
-            payload=payload,
-        )
-    except Exception as e:
-        return f"⚠️ Failed to invoke agent: {e}"
-
-    # Process the streaming response
-    content_type = response.get("contentType", "")
-    content_parts = []
-
-    try:
-        if "text/event-stream" in content_type:
-            for line in response["response"].iter_lines(chunk_size=10):
-                if line:
-                    decoded = line.decode("utf-8")
-                    if decoded.startswith("data: "):
-                        chunk = decoded[6:]
-                        # Try to parse as JSON; if successful yield parsed value
-                        try:
-                            parsed = json.loads(chunk)
-                            content_parts.append(str(parsed))
-                        except (json.JSONDecodeError, ValueError):
-                            content_parts.append(chunk)
-        elif content_type == "application/json":
-            raw_parts = []
-            for chunk in response.get("response", []):
-                raw_parts.append(chunk.decode("utf-8"))
-            result = json.loads("".join(raw_parts))
-            content_parts.append(str(result))
-        else:
-            # Fallback: read raw response body
-            for chunk in response.get("response", []):
-                decoded = chunk.decode("utf-8")
-                try:
-                    parsed = json.loads(decoded)
-                    content_parts.append(str(parsed))
-                except (json.JSONDecodeError, ValueError):
-                    content_parts.append(decoded)
-    except Exception as e:
-        return f"⚠️ Error reading agent response: {e}"
-
-    return "".join(content_parts) if content_parts else "No response from agent."
-
-
-# ─── UI Rendering ─────────────────────────────────────────────────────────────
-
-def render_login_page() -> None:
-    """Render the login form or new-password challenge form."""
-    st.title("🔄 Returns & Refunds Assistant")
-    st.markdown("Please log in to continue.")
-
-    # Handle NEW_PASSWORD_REQUIRED challenge
-    if st.session_state.get("challenge_name") == "NEW_PASSWORD_REQUIRED":
-        st.warning("You must set a new password before continuing.")
-        with st.form("new_password_form"):
-            new_password = st.text_input("New Password", type="password")
-            submitted = st.form_submit_button("Set New Password")
-            if submitted and new_password:
-                if respond_to_new_password_challenge(DEFAULT_USERNAME, new_password):
-                    st.rerun()
-        return
-
-    # Standard login form
-    with st.form("login_form"):
-        email = st.text_input("Email", value=DEFAULT_USERNAME)
-        password = st.text_input("Password", value=DEFAULT_PASSWORD, type="password")
-        submitted = st.form_submit_button("Log In")
-
-        if submitted:
-            if authenticate(email, password):
-                st.rerun()
-
-
-def render_sidebar() -> None:
-    """Render the sidebar with user info and logout."""
-    with st.sidebar:
-        st.markdown("### 👤 User Info")
-        st.markdown(f"**Email:** {st.session_state['user_email']}")
-        st.markdown(f"**Session:** `{st.session_state['session_id'][:8]}...`")
-        st.divider()
-        if st.button("Logout", use_container_width=True):
-            logout()
-            st.rerun()
-
-
-def render_chat() -> None:
-    """Render the chat interface."""
-    st.title("🔄 Returns & Refunds Assistant")
-
-    # Show welcome message if chat is empty
-    if not st.session_state["messages"]:
-        st.session_state["messages"].append({
-            "role": "assistant",
-            "content": WELCOME_MESSAGE,
-        })
-
-    # Display chat history
-    for message in st.session_state["messages"]:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-
-    # Chat input
-    if prompt := st.chat_input("Type your message..."):
-        # Add user message to history and display it
-        st.session_state["messages"].append({"role": "user", "content": prompt})
         with st.chat_message("user"):
-            st.markdown(prompt)
+            st.markdown(run["prompt"])
 
-        # Invoke agent and display response
         with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                response = invoke_agent(prompt)
-            st.markdown(response)
+            st.markdown(run["response"])
 
-        # Add assistant response to history
-        st.session_state["messages"].append({"role": "assistant", "content": response})
+        st.caption(f"Scenario: `{sc['id']}` · {len(steps)} tool call(s)")
 
+    # ── Column 2: Trajectory ──────────────────────────────────────────────────
+    with col_traj:
+        st.subheader("🔀 Agent Trajectory")
+        st.caption("Tool calls made in order →")
 
-# ─── Main ─────────────────────────────────────────────────────────────────────
+        if not steps:
+            st.info("No tools called.")
+        else:
+            for i, step in enumerate(steps, 1):
+                emoji = TOOL_EMOJI.get(step["name"], "🔧")
+                with st.container(border=True):
+                    st.markdown(f"**Step {i}** &nbsp; {emoji} `{step['name']}`")
 
-def main() -> None:
-    """Main application entry point."""
-    if st.session_state["authenticated"]:
-        render_sidebar()
-        render_chat()
-    else:
-        render_login_page()
+                    # Args
+                    if step["args"]:
+                        args_str = "  ".join(
+                            f"`{k}={v}`" for k, v in step["args"].items()
+                        )
+                        st.markdown(f"**Args:** {args_str}")
+                    else:
+                        st.markdown("**Args:** *(none)*")
 
+                    # Result — truncated for display
+                    result_preview = json.dumps(step["result"], default=str)
+                    if len(result_preview) > 160:
+                        result_preview = result_preview[:160] + "…"
+                    st.code(result_preview, language="json")
 
-if __name__ == "__main__":
-    main()
+                    st.caption(f"⏱ {step['ms']} ms")
+
+        # Trajectory summary arrow chain
+        if run["rec_names"]:
+            chain = " → ".join(f"`{n}`" for n in run["rec_names"])
+            st.markdown(f"**Full chain:** {chain}")
+
+    # ── Column 3: Eval Results ────────────────────────────────────────────────
+    with col_eval:
+        st.subheader("📊 Eval Results")
+
+        # Overall verdict
+        if all_ok:
+            st.success(f"✅ {passed}/{total} rules passed")
+        else:
+            st.error(f"❌ {passed}/{total} rules passed — {total - passed} failure(s)")
+
+        st.markdown("**Rule checks:**")
+        for r in evals:
+            st.markdown(r["msg"])
+
+        st.markdown("---")
+        st.markdown("**Expected keywords in response:**")
+        keywords = sc.get("expected_response_contains", [])
+        response_lower = run["response"].lower()
+        for kw in keywords:
+            found = kw.lower() in response_lower
+            icon = "✅" if found else "⚠️"
+            st.markdown(f"{icon} `{kw}`")
+
+        st.markdown("---")
+        st.markdown("**Task description:**")
+        st.caption(sc["task_description"])
+
+# ─── All 10 scenarios at a glance ─────────────────────────────────────────────
+
+st.markdown("---")
+with st.expander("📋 All 10 golden scenarios"):
+    for ex in DATASET:
+        rule_counts = (
+            f"{len(ex['rules']['must_call'])} must-call · "
+            f"{len(ex['rules']['must_not_call'])} must-not-call · "
+            f"{len(ex['rules']['order_before'])} ordering"
+        )
+        traj_chain = " → ".join(s["tool"] for s in ex["recorded_trajectory"])
+        st.markdown(
+            f"**{ex['id']}** — {ex['description']}  \n"
+            f"<small>Trajectory: `{traj_chain}`  ·  Rules: {rule_counts}</small>",
+            unsafe_allow_html=True,
+        )
+        st.markdown("")

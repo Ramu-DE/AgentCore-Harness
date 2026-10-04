@@ -1,0 +1,19 @@
+# Eval harness dependencies
+# Install into the same venv as the agent: pip install -r evals/requirements.txt
+
+# Agent framework (matches AgentCoreProject/app/CustomerAssistantAgent/pyproject.toml)
+strands-agents>=1.13.0
+strands-agents-tools>=0.1.0
+bedrock-agentcore>=1.9.1
+boto3>=1.35.0
+botocore[crt]>=1.35.0
+
+# Eval frameworks
+deepeval>=2.0.0        # TaskCompletionMetric, GEval, trajectory scoring
+
+# Test runner
+pytest>=8.0.0
+pytest-asyncio>=0.24.0
+
+# Optional: tracing
+# langfuse>=2.0.0

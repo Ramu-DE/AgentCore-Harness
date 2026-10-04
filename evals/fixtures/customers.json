@@ -1,0 +1,5 @@
+[
+  {"customer_id": "C-01", "name": "Alice Smith",    "country_code": "US"},
+  {"customer_id": "C-02", "name": "Bob Jones",      "country_code": "GB"},
+  {"customer_id": "C-03", "name": "Carlos Rivera",  "country_code": "MX"}
+]

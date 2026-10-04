@@ -1,0 +1,6 @@
+[
+  {"product_id": "P-001", "product_name": "Laptop Pro 15",               "product_category": "Electronics", "provider": "TechBrand"},
+  {"product_id": "P-002", "product_name": "Trail Runner X",              "product_category": "Footwear",    "provider": "SportsCo"},
+  {"product_id": "P-003", "product_name": "Espresso Maker",              "product_category": "Kitchen",     "provider": "HomeBrands"},
+  {"product_id": "P-004", "product_name": "Noise Cancelling Headphones", "product_category": "Electronics", "provider": "AudioCo"}
+]

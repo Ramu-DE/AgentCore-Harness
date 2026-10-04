@@ -1,0 +1,30 @@
+[
+  {
+    "source": "s3://workshop-policies/us-return-policy.md",
+    "country": "US",
+    "keywords": ["return", "refund", "window", "days", "electronics", "apparel"],
+    "score": 0.95,
+    "text": "US Return Policy: Electronics may be returned within 30 days of purchase in original condition. Apparel may be returned within 60 days. All items must include original packaging. Refunds are processed within 5-7 business days."
+  },
+  {
+    "source": "s3://workshop-policies/gb-return-policy.md",
+    "country": "GB",
+    "keywords": ["return", "refund", "window", "days", "electronics", "consumer", "rights"],
+    "score": 0.92,
+    "text": "UK Return Policy: Under the Consumer Rights Act 2015, customers have 14 days to return any online purchase. Electronics may be returned within 30 days if faulty. Refunds issued within 14 days of receiving the returned item."
+  },
+  {
+    "source": "s3://workshop-policies/mx-return-policy.md",
+    "country": "MX",
+    "keywords": ["return", "refund", "window", "days", "restocking"],
+    "score": 0.90,
+    "text": "Mexico Return Policy: Items may be returned within 30 days with receipt. Electronics are subject to a 15% restocking fee unless defective. Refunds processed within 10 business days."
+  },
+  {
+    "source": "s3://workshop-policies/global-refund-policy.md",
+    "country": "ALL",
+    "keywords": ["refund", "process", "how", "timeline", "when", "verification"],
+    "score": 0.88,
+    "text": "Global Refund Processing: All refunds are subject to order verification. A valid order must exist in the system before a refund can be issued. Contact your regional support team for country-specific processing times."
+  }
+]
